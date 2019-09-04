@@ -1,0 +1,829 @@
+"""
+Code for compressing and decompressing using Huffman compression.
+"""
+
+from nodes import HuffmanNode, ReadNode
+
+
+# ====================
+# Helper functions for manipulating bytes
+
+
+def get_bit(byte, bit_num):
+    """ Return bit number bit_num from right in byte.
+
+    @param int byte: a given byte
+    @param int bit_num: a specific bit number within the byte
+    @rtype: int
+
+    >>> get_bit(0b00000101, 2)
+    1
+    >>> get_bit(0b00000101, 1)
+    0
+    """
+    return (byte & (1 << bit_num)) >> bit_num
+
+
+def byte_to_bits(byte):
+    """ Return the representation of a byte as a string of bits.
+
+    @param int byte: a given byte
+    @rtype: str
+
+    >>> byte_to_bits(14)
+    '00001110'
+    """
+    return "".join([str(get_bit(byte, bit_num))
+                    for bit_num in range(7, -1, -1)])
+
+def bits_to_byte(bits):
+    """ Return int represented by bits, padded on right.
+
+    @param str bits: a string representation of some bits
+    @rtype: int
+
+    >>> bits_to_byte("00000101")
+    5
+    >>> bits_to_byte("101") == 0b10100000
+    True
+    """
+    return sum([int(bits[pos]) << (7 - pos)
+                for pos in range(len(bits))])
+
+
+# ====================
+# Functions for compression
+
+class PriorityQueue:
+    """ PriorityQueue object for dictionaries
+
+    A PriorityQueue object holding a list of nested lists containing the
+    values and keys in a dictionary
+    """
+
+    def __init__(self, freq_dict):
+        """(PriorityQueue, dict{int, int})-> None
+
+        Creates a PriorityQueue, given a dictionary freq_dict and creates a
+        nested list where the value of a key is at index 0, and the huffmanNode
+        of the key is at index 1, and sorts the list based on the highest
+        values
+
+        >>> p_queue = PriorityQueue({"a":45, "b":50})
+        >>> p_queue.list
+        [[50, HuffmanNode(b, None, None)], [45, HuffmanNode(a, None, None)]]
+        >>> p_queue = PriorityQueue({})
+        >>> p_queue.list
+        []
+        """
+
+        self.list = []
+        for key, value in freq_dict.items():
+            self.list.append([value, HuffmanNode(key)])
+
+        self.list.sort()
+        self.list.reverse()
+
+
+    def pull(self):
+        """(PriorityQueue)-> list  of [int, int]
+        Removes and returns the last list in self.list
+
+        >>> p_queue = PriorityQueue({"a":45, "b":50})
+        >>> p_queue.list
+        [[50, HuffmanNode(b, None, None)], [45, HuffmanNode(a, None, None)]]
+        >>> p_queue.pull()
+        [45, HuffmanNode(a, None, None)]
+        """
+        return self.list.pop()
+
+    def return_node(self):
+        """(PriorityQueue)-> str
+
+        Returns the key value of the first list in self.list if it exists,
+        otherwise it returns None
+
+        p_queue = PriorityQueue({"a":45, "b":50, "c":12, "d": 15})
+        """
+        try:
+            return self.list[0][1]
+        except IndexError:
+            return None
+
+
+
+    def __len__(self):
+        """(PriorityQueue)-> int
+
+        Returns an integer representing the length of self.list
+
+        >>> p_queue = PriorityQueue({"a":45, "b":50, "c":12, "d": 15})
+        >>> len(p_queue)
+        4
+
+        >>> p_queue = PriorityQueue({})
+        >>> len(p_queue)
+        0
+        """
+        return len(self.list)
+
+    def insert_internal_node(self, list_1, list_2):
+        """(PriorityQueue, list of [int, HuffmanNode)-> None
+
+        Adds a new list into self.list and adds the values at index 0 for
+        list_1 and list_2 and saves the sum at index 0 of the new list, while
+        the value of index 1 is an internal HuffmanNode where the left child
+        is the value of list_1[1] and the right child is list_2[1]
+        """
+        self.list.append([list_1[0] + list_2[0], HuffmanNode(None, list_1[1],\
+                                                             list_2[1])])
+        self.list.sort()
+        self.list.reverse()
+
+
+def make_freq_dict(text):
+    """ (bytes)-> dict{int, int}
+    Return a dictionary that maps each byte in text to its frequency.
+
+    @param bytes text: a bytes object
+    @rtype: dict{int,int}
+
+    >>> d = make_freq_dict(bytes([65, 66, 67, 66]))
+    >>> d == {65: 1, 66: 2, 67: 1}
+    True
+    """
+    freq_dict = {}
+    for char in text:
+        if char not in freq_dict.keys():
+            freq_dict[char] = 1
+        else:
+            freq_dict[char] += 1
+
+    return freq_dict
+
+
+
+
+def huffman_tree(freq_dict):
+    """(dict{int, int})-> HuffmanNode
+
+    Return the root HuffmanNode of a Huffman tree corresponding
+    to frequency dictionary freq_dict.
+
+    @param dict(int,int) freq_dict: a frequency dictionary
+    @rtype: HuffmanNode
+
+    >>> freq = {2: 6, 3: 4}
+    >>> t = huffman_tree(freq)
+    >>> result1 = HuffmanNode(None, HuffmanNode(3), HuffmanNode(2))
+    >>> result2 = HuffmanNode(None, HuffmanNode(2), HuffmanNode(3))
+    >>> t == result1 or t == result2
+    True
+    """
+
+    if len(freq_dict) == 1:
+        single_key = list(freq_dict.keys())[0]
+        if type(single_key) == str:
+            return HuffmanNode(ord(single_key))
+        else:
+            return HuffmanNode(single_key)
+
+    pq = PriorityQueue(freq_dict)
+    if not freq_dict:
+        return HuffmanNode()
+
+    while len(pq) != 1:
+        left = pq.pull()
+        right = pq.pull()
+        pq.insert_internal_node(left, right)
+
+    return pq.return_node()
+
+def get_codes(tree):
+    """(HuffmanNode)-> dict{int, str}
+
+    Return a dict mapping symbols from tree rooted at HuffmanNode to codes.
+
+    @param HuffmanNode tree: a Huffman tree rooted at node 'tree'
+    @rtype: dict(int,str)
+
+    >>> tree = HuffmanNode(None, HuffmanNode(3), HuffmanNode(2))
+    >>> d = get_codes(tree)
+    >>> d == {3: "0", 2: "1"}
+    True
+    """
+
+    def code_helper(tree, code, code_list):
+        """(HuffmanNode, str, dict{int, str})
+
+        Helper function that takes a HuffmanNode: tree,  a str: codes and a
+        dictionary, code_list and navigates recursively through the tree until
+        it hist a leaf adding a "0" for every left child traversed and a "1"
+        for every right child traversed and once it reaches a leaf it adds the
+        symbol of the leaf to the dict as a key and the code as its value
+
+        >>> tree = HuffmanNode(None, HuffmanNode(3), HuffmanNode(2))
+        >>> code_helper(tree, "", {})
+        {3: "0", 2: "1"}
+        """
+        if tree.is_leaf():
+            if tree.symbol != None:
+                if code != "":
+                    code_list[tree.symbol] = code
+                else:
+                    code_list[tree.symbol] = "1"
+                    return code_list
+
+        else:
+            if tree.left:
+                code_helper(tree.left, code + "0", code_list)
+            if tree.right:
+                code_helper(tree.right, code + "1", code_list)
+        return code_list
+
+    return code_helper(tree, "", {})
+
+
+# outline of helper function taken from week 5 lecture slides
+def in_postorder(tree):
+    """(HuffmanNode)-> list of [HuffmanNode]
+
+    Helper function that returns a list of HuffmanNode's depicting the
+    postorder arrangement of all of the internal nodes of tree
+
+    >>> left = HuffmanNode(None, HuffmanNode(3), HuffmanNode(2))
+    >>> right = HuffmanNode(None, HuffmanNode(9), HuffmanNode(10))
+    >>> tree = HuffmanNode(None, left, right)
+    >>> in_postorder(tree)
+    [HuffmanNode(None, HuffmanNode(3, None, None), HuffmanNode(2, None, None))\
+, HuffmanNode(None, HuffmanNode(9, None, None), \
+HuffmanNode(10, None, None)), HuffmanNode(None, \
+HuffmanNode(None, HuffmanNode(3, None, None), HuffmanNode(2, None, None)), \
+HuffmanNode(None, HuffmanNode(9, None, None), \
+HuffmanNode(10, None, None)))]
+    """
+    if not tree:
+        return[]
+    if tree.symbol != None:
+        return []
+    else:
+        return in_postorder(tree.left) + in_postorder(tree.right) + [tree]
+
+def number_nodes(tree):
+    """ Number internal nodes in tree according to postorder traversal;
+    start numbering at 0.
+
+    @param HuffmanNode tree: a Huffman tree rooted at node 'tree'
+    @rtype: NoneType
+
+    >>> left = HuffmanNode(None, HuffmanNode(3), HuffmanNode(2))
+    >>> right = HuffmanNode(None, HuffmanNode(9), HuffmanNode(10))
+    >>> tree = HuffmanNode(None, left, right)
+    >>> number_nodes(tree)
+    >>> tree.left.number
+    0
+    >>> tree.right.number
+    1
+    >>> tree.number
+    2
+    """
+    if tree.is_leaf():
+        tree.number = 0
+
+    post_list = in_postorder(tree)
+    for i in range(len(post_list)):
+        post_list[i].number = i
+
+def avg_length(tree, freq_dict):
+    """ (HuffmanNode, dict{int,int})-> float
+    Return the number of bits per symbol required to compress text
+    made of the symbols and frequencies in freq_dict, using the Huffman tree.
+
+    @param HuffmanNode tree: a Huffman tree rooted at node 'tree'
+    @param dict(int,int) freq_dict: frequency dictionary
+    @rtype: float
+
+    >>> freq = {3: 2, 2: 7, 9: 1}
+    >>> left = HuffmanNode(None, HuffmanNode(3), HuffmanNode(2))
+    >>> right = HuffmanNode(9)
+    >>> tree = HuffmanNode(None, left, right)
+    >>> avg_length(tree, freq)
+    1.9
+    """
+    sum_weight = 0
+    sum_freq = 0
+    code_dict = get_codes(tree)
+    for key in freq_dict:
+        sum_weight += len(code_dict[key]) * freq_dict[key]
+        sum_freq += freq_dict[key]
+    if sum_freq != 0:
+        return sum_weight/sum_freq
+
+
+def generate_compressed(text, codes):
+    """(bytes, dict(int,str))-> bytes
+
+    Return compressed form of text, using mapping in codes for each symbol.
+
+    @param bytes text: a bytes object
+    @param dict(int,str) codes: mappings from symbols to codes
+    @rtype: bytes
+
+    >>> d = {0: "0", 1: "10", 2: "11"}
+    >>> text = bytes([1, 2, 1, 0])
+    >>> result = generate_compressed(text, d)
+    >>> [byte_to_bits(byte) for byte in result]
+    ['10111000']
+    >>> text = bytes([1, 2, 1, 0, 2])
+    >>> result = generate_compressed(text, d)
+    >>> [byte_to_bits(byte) for byte in result]
+    ['10111001', '10000000']
+    """
+    byte_str = ""
+    lst = []
+    for item in text:
+        byte_str += codes[item]
+
+    lst2 = [byte_str[i:i + 8] for i in range(0, len(byte_str), 8)]
+
+    for item in lst2:
+        lst.append(bits_to_byte(item))
+
+    return bytes(lst)
+
+
+def tree_to_bytes(tree):
+    """(HuffmanNode)-> bytes
+    Return a bytes representation of the tree rooted at tree.
+
+    @param HuffmanNode tree: a Huffman tree rooted at node 'tree'
+    @rtype: bytes
+
+    The representation should be based on the postorder traversal of tree
+    internal nodes, starting from 0.
+    Precondition: tree has its nodes numbered.
+
+    >>> tree = HuffmanNode(None, HuffmanNode(3), HuffmanNode(2))
+    >>> number_nodes(tree)
+    >>> list(tree_to_bytes(tree))
+    [0, 3, 0, 2]
+    >>> left = HuffmanNode(None, HuffmanNode(3), HuffmanNode(2))
+    >>> right = HuffmanNode(5)
+    >>> tree = HuffmanNode(None, left, right)
+    >>> number_nodes(tree)
+    >>> list(tree_to_bytes(tree))
+    [0, 3, 0, 2, 1, 0, 0, 5]
+    """
+    all_bytes = bytes()
+    in_list = in_postorder(tree)
+
+    for item in in_list:
+        temp_list = []
+        if item.left and item.right:
+            if item.left.is_leaf():
+                # make byte1 = 0
+                temp_list.append(bits_to_byte("0"))
+                #make byte2 = item.left.symbol
+                if type(item.left.symbol) == str:
+                    temp_list.append((ord(item.left.symbol)))
+                else:
+                    temp_list.append((item.left.symbol))
+            else:
+                # make byte1 = 1
+                temp_list.append(bits_to_byte("00000001"))
+                # make byte2 = item.left.number
+                temp_list.append(item.left.number)
+            if item.right.is_leaf():
+                #make byte3 = 0
+                temp_list.append(bits_to_byte("0"))
+                #make byte4 = item.right.symbol
+                if type(item.left.symbol) == str:
+                    temp_list.append((ord(item.right.symbol)))
+                else:
+                    temp_list.append((item.right.symbol))
+            else:
+                # make byte3 = 1
+                temp_list.append(bits_to_byte("00000001"))
+                # make byte4 = item.right.number
+                temp_list.append(item.right.number)
+
+        all_bytes += bytes(temp_list)[:]
+
+    return all_bytes
+
+
+def num_nodes_to_bytes(tree):
+    """ Return number of nodes required to represent tree (the root of a
+    numbered Huffman tree).
+
+    @param HuffmanNode tree: a Huffman tree rooted at node 'tree'
+    @rtype: bytes
+    """
+    return bytes([tree.number + 1])
+
+
+def size_to_bytes(size):
+    """ Return the size as a bytes object.
+
+    @param int size: a 32-bit integer that we want to convert to bytes
+    @rtype: bytes
+
+    >>> list(size_to_bytes(300))
+    [44, 1, 0, 0]
+    """
+    # little-endian representation of 32-bit (4-byte)
+    # int size
+    return size.to_bytes(4, "little")
+
+
+def compress(in_file, out_file):
+    """ Compress contents of in_file and store results in out_file.
+
+    @param str in_file: input file whose contents we want to compress
+    @param str out_file: output file, where we store our compressed result
+    @rtype: NoneType
+    """
+    with open(in_file, "rb") as f1:
+        text = f1.read()
+    freq = make_freq_dict(text)
+    tree = huffman_tree(freq)
+    codes = get_codes(tree)
+    number_nodes(tree)
+    print("Bits per symbol:", avg_length(tree, freq))
+    result = (num_nodes_to_bytes(tree) + tree_to_bytes(tree) +
+              size_to_bytes(len(text)))
+    result += generate_compressed(text, codes)
+    with open(out_file, "wb") as f2:
+        f2.write(result)
+
+
+# ====================
+# Functions for decompression
+
+
+def rn_to_hn(rn):
+    """(ReadNode)-> HuffmanNode
+    Helper function that converts a ReadNode rn, to a HuffmanNode
+
+    >>> rn_to_hn(ReadNode(0, 5, 0, 7))
+    HuffmanNode(None, HuffmanNode(5, None, None), HuffmanNode(7, None, None))
+
+    >>> rn_to_hn(ReadNode(1, 3, 0, 7))
+    HuffmanNode(None, HuffmanNode(None, None, None), HuffmanNode(7, None, None\
+))
+    """
+    node = HuffmanNode(None)
+    # if left subtree is a leaf
+    if rn.l_type == 0:
+        node.left = HuffmanNode(rn.l_data)
+    else:
+        node.left = HuffmanNode(None)
+        node.left.number = rn.l_data
+    # if right subtree is a leaf
+    if rn.r_type == 0:
+        node.right = HuffmanNode(rn.r_data)
+    else:
+        node.right = HuffmanNode(None)
+        node.right.number = rn.r_data
+    return node
+
+
+
+
+def generate_tree_general(node_lst, root_index):
+    """ (list of [ReadNode], int)-> HuffmanNode
+    Return the root of the Huffman tree corresponding
+    to node_lst[root_index].
+
+    The function assumes nothing about the order of the nodes in the list.
+
+    @param list[ReadNode] node_lst: a list of ReadNode objects
+    @param int root_index: index in the node list
+    @rtype: HuffmanNode
+
+    >>> lst = [ReadNode(0, 5, 0, 7), ReadNode(0, 10, 0, 12), \
+    ReadNode(1, 1, 1, 0)]
+    >>> generate_tree_general(lst, 2)
+    HuffmanNode(None, HuffmanNode(None, HuffmanNode(10, None, None), \
+HuffmanNode(12, None, None)), \
+HuffmanNode(None, HuffmanNode(5, None, None), HuffmanNode(7, None, None)))
+    """
+
+    def build_tree(node, node_list, index):
+        """(HuffmanNode, list of [ReadNode], int)-> HuffmanNode
+
+        Helper function that takes a HuffmanNode, list of [ReadNode] and an
+        integer representing the index of the ReadNode representing node and
+        creates a tree recursivly from node and returning the modified node
+
+        >>> lst = [ReadNode(0, 5, 0, 7), ReadNode(0, 10, 0, 12), \
+        ReadNode(1, 1, 1, 0)]
+        >>> root = rn_to_hn(lst[2])
+        >>> build_tree(root, lst, 2)
+        HuffmanNode(None, HuffmanNode(None, HuffmanNode(10, None, None), \
+        HuffmanNode(12, None, None)), \
+        HuffmanNode(None, HuffmanNode(5, None, None), \
+        HuffmanNode(7, None, None)))
+        """
+        if not node.is_leaf():
+            #left and right subtrees are internal nodes
+            left_type = node_list[index].l_type
+            right_type = node_list[index].r_type
+            left_data = node_list[index].l_data
+            right_data = node_list[index].r_data
+
+            if left_type == 1 and right_type == 1:
+                node.left = rn_to_hn(node_list[left_data])
+                node.right = rn_to_hn(node_list[right_data])
+                return HuffmanNode(node.symbol, build_tree(node.left, \
+                node_list, left_data), build_tree(node.right, \
+                node_list, right_data))
+
+            #left subtree is an internal node, right subtree is a leaf
+            elif left_type == 1 and right_type == 0:
+                node.left = rn_to_hn(node_list[left_data])
+                node.right = HuffmanNode(right_data)
+                return HuffmanNode(node.symbol, build_tree(node.left,\
+                            node_list, left_data), node.right)
+
+            #left subtree is a leaf, right subtree is an internal node
+            elif left_type == 0 and right_type == 1:
+                node.left = HuffmanNode(left_data)
+                node.right = rn_to_hn(node_list[right_data])
+                return HuffmanNode(node.symbol, node.left, \
+                    build_tree(node.right, node_list, right_data))
+
+            #left and right subtrees are leafs
+            else:
+                node.left = HuffmanNode(left_data)
+                node.right = HuffmanNode(right_data)
+                return node
+        else:
+            return node
+
+    if node_lst == []:
+        return HuffmanNode(None)
+    else:
+        root = rn_to_hn(node_lst[root_index])
+        root = build_tree(root, node_lst, root_index)
+
+    return root
+
+
+
+def generate_tree_postorder(node_lst, root_index):
+   """ Return the root of the Huffman tree corresponding
+   to node_lst[root_index].
+
+   The function assumes that the list represents a tree in postorder.
+
+   @param list[ReadNode] node_lst: a list of ReadNode objects
+   @param int root_index: index in the node list
+   @rtype: HuffmanNode
+
+   >>> lst = [ReadNode(0, 5, 0, 7), ReadNode(0, 10, 0, 12), \
+   ReadNode(1, 0, 1, 0)]
+   >>> generate_tree_postorder(lst, 2)
+   HuffmanNode(None, HuffmanNode(None, HuffmanNode(5, None, None), \
+HuffmanNode(7, None, None)), \
+HuffmanNode(None, HuffmanNode(10, None, None), HuffmanNode(12, None, None)))
+   """
+
+   index = root_index
+   rnode = node_lst[index]
+
+   if rnode.l_type == 0 and rnode.r_type == 0:
+       return HuffmanNode(None, HuffmanNode(rnode.l_data), \
+                          HuffmanNode(rnode.r_data))
+   elif rnode.l_type == 0 and rnode.r_type == 1:
+       return HuffmanNode(None, HuffmanNode(rnode.l_data), \
+                          generate_tree_postorder(node_lst, root_index - 1))
+   elif rnode.l_type == 1 and rnode.r_type == 0:
+       return HuffmanNode(None, generate_tree_postorder(\
+           node_lst, root_index - 1), HuffmanNode(rnode.r_data))
+   elif rnode.l_type == 1 and rnode.r_type == 1:
+       left_st = generate_tree_postorder(node_lst, index - 1)
+       right_st_index = determine_index(index - 1, left_st)
+       return HuffmanNode(None, generate_tree_postorder(\
+           node_lst, right_st_index), left_st)
+
+
+def determine_index(initial_index, subtree):
+   '''
+   Return the updated index from that used in subtree at initial_index
+   :param initial_index: int
+   :param subtree: HuffmanNode who is rooted at subtree
+   :return: int
+   '''
+   change = len(in_postorder(subtree))
+   if change != None:
+       return initial_index - change
+   else:
+       return initial_index - 1
+
+
+
+
+
+
+
+
+def generate_uncompressed(tree, text, size):
+   """ Use Huffman tree to decompress size bytes from text.
+
+   @param HuffmanNode tree: a HuffmanNode tree rooted at 'tree'
+   @param bytes text: text to decompress
+   @param int size: how many bytes to decompress from text.
+   @rtype: bytes
+   """
+   temp_dict = {}
+   temp_lst = []
+   ch_str = ''
+
+   symbol_dict = get_codes(tree)
+
+   # Makes codes the dictionary key and the corresponding character its value
+   for key in symbol_dict:
+       temp_dict[symbol_dict[key]] = key
+
+   # Makes Bytes Object into corresponding bits string
+   bytes_str_lst = [byte_to_bits(byte) for byte in text]
+   # Checks if bits str section corresponds to character (works between bytes)
+   for byte in bytes_str_lst:
+       for bit in byte:
+           ch_str += bit
+           if len(temp_lst) < size:
+               if ch_str in temp_dict:
+                   temp_lst.append(temp_dict[ch_str])
+                   ch_str = ''
+
+   return bytes(temp_lst)
+
+def bytes_to_nodes(buf):
+    """ Return a list of ReadNodes corresponding to the bytes in buf.
+
+    @param bytes buf: a bytes object
+    @rtype: list[ReadNode]
+
+    >>> bytes_to_nodes(bytes([0, 1, 0, 2]))
+    [ReadNode(0, 1, 0, 2)]
+    """
+    lst = []
+    for i in range(0, len(buf), 4):
+        l_type = buf[i]
+        l_data = buf[i+1]
+        r_type = buf[i+2]
+        r_data = buf[i+3]
+        lst.append(ReadNode(l_type, l_data, r_type, r_data))
+    return lst
+
+
+def bytes_to_size(buf):
+    """ Return the size corresponding to the
+    given 4-byte little-endian representation.
+
+    @param bytes buf: a bytes object
+    @rtype: int
+
+    >>> bytes_to_size(bytes([44, 1, 0, 0]))
+    300
+    """
+    return int.from_bytes(buf, "little")
+
+
+def uncompress(in_file, out_file):
+    """ Uncompress contents of in_file and store results in out_file.
+
+    @param str in_file: input file to uncompress
+    @param str out_file: output file that will hold the uncompressed results
+    @rtype: NoneType
+    """
+    with open(in_file, "rb") as f:
+        num_nodes = f.read(1)[0]
+        buf = f.read(num_nodes * 4)
+        node_lst = bytes_to_nodes(buf)
+        # use generate_tree_general or generate_tree_postorder here
+        tree = generate_tree_general(node_lst, num_nodes - 1)
+        size = bytes_to_size(f.read(4))
+        with open(out_file, "wb") as g:
+            text = f.read()
+            g.write(generate_uncompressed(tree, text, size))
+
+
+# ====================
+# Other functions
+
+def improve_tree(tree, freq_dict):
+    """ Improve the tree as much as possible, without changing its shape,
+    by swapping nodes. The improvements are with respect to freq_dict.
+
+    @param HuffmanNode tree: Huffman tree rooted at 'tree'
+    @param dict(int,int) freq_dict: frequency dictionary
+    @rtype: NoneType
+
+    >>> left = HuffmanNode(None, HuffmanNode(99), HuffmanNode(100))
+    >>> right = HuffmanNode(None, HuffmanNode(101), \
+    HuffmanNode(None, HuffmanNode(97), HuffmanNode(98)))
+    >>> tree = HuffmanNode(None, left, right)
+    >>> freq = {97: 26, 98: 23, 99: 20, 100: 16, 101: 15}
+    >>> improve_tree(tree, freq)
+    >>> avg_length(tree, freq)
+    2.31
+    """
+
+    def get_height(tree, value, height):
+        """
+
+
+        :param tree:
+        :return:
+        """
+        if not tree:
+            return None
+        if tree.symbol == value:
+            return height
+        elif (tree.right and tree.right.symbol == value) or\
+                (tree.left and tree.left.symbol == value):
+            return height + 1
+        else:
+            if tree.right:
+                if get_height(tree.right, value, height+1):
+                    return get_height(tree.right, value, height+1)
+            if tree.left:
+                if get_height(tree.left, value, height + 1):
+                    return get_height(tree.left, value, height + 1)
+
+
+    def search_and_swap(tree, value1, value2):
+        """(HuffmanNode, int, int)-> None
+
+        Helper function that swaps the node.symbol's  with the node symbol
+        values value1 and value2
+        """
+        if tree:
+            if tree.symbol == value1:
+                tree.symbol = value2
+            elif tree.symbol == value2:
+                tree.symbol = value1
+            search_and_swap(tree.right, value1, value2)
+            search_and_swap(tree.left, value1, value2)
+
+
+    def fix_tree(tree, height_list):
+        """
+
+        :return:
+        """
+
+        min_h = [9999999999, None]
+        max_f = [0, None]
+
+        temp = max(height_list)
+        max_f[0] = temp[0]
+        max_f[1] = height_list.index(temp)
+
+        for item in height_list:
+            if item[2] < min_h[0] or (item[2] == min_h[0] \
+                                    and item[0] < height_list[min_h[1]][0]):
+                min_h[0] = item[2]
+                min_h[1] = height_list.index(item)
+
+
+        if min_h[1] != max_f[1]:
+            search_and_swap(tree, height_list[min_h[1]][1], \
+                            height_list[max_f[1]][1])
+            temp2 = height_list[max_f[1]][2]
+            height_list.pop(max_f[1])
+            height_list[min_h[1]-1][2] = temp2
+            fix_tree(tree, height_list)
+
+
+    #[freq, value, height]
+    height_list = []
+    for key in freq_dict:
+        height_list.append([freq_dict[key], key, get_height(tree, key, 0)])
+
+    fix_tree(tree, height_list)
+
+if __name__ == "__main__":
+    import python_ta
+    python_ta.check_all(config="huffman_pyta.txt")
+    # TODO: Uncomment these when you have implemented all the functions
+    #import doctest
+    #doctest.testmod()
+
+    import time
+
+    mode = input("Press c to compress or u to uncompress: ")
+    if mode == "c":
+        fname = input("File to compress: ")
+        start = time.time()
+        compress(fname, fname + ".huf")
+        print("compressed {} in {} seconds."
+              .format(fname, time.time() - start))
+    elif mode == "u":
+        fname = input("File to uncompress: ")
+        start = time.time()
+        uncompress(fname, fname + ".orig")
+        print("uncompressed {} in {} seconds."
+              .format(fname, time.time() - start))
